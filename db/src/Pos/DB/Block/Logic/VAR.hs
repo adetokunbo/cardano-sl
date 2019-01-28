@@ -96,6 +96,30 @@ verifyBlocksPrefix genesisConfig currentSlot blocks = runExceptT $ do
     -- 'slogVerifyBlocks' uses 'Pos.Chain.Block.Pure.verifyBlocks' which does
     -- the internal consistency checks formerly done in the 'Bi' instance
     -- 'decode'.
+
+    ---------------------------------------------------------------------------
+    -- @intricate: POTENTIAL ISSUE
+    --
+    -- `usVerifyBlocks` is called after `slogVerifyBlocks`
+    --
+    -- `slogVerifyBlocks` - performs operations such as ensuring that the block
+    -- issuer adheres to slot leader schedule.
+    --
+    -- `usVerifyBlocks` - performs operations such as handling update adoption.
+    --
+    -- In the event that we're on an epoch boundary in which we're supposed to
+    -- adopt an OBFT update, this order of events could present an issue.
+    -- This is because the system does not adopt updates until `usVerifyBlocks`
+    -- is called and, as a result, we could attempt to verify the slot leader
+    -- against an incorrect schedule in certain situations.
+    --
+    -- E.g. if transitioning from `Original` to `OBFT`, at the epoch boundary
+    -- (the first slot of the new epoch) upon which the update is supposed to
+    -- be adopted, `slogVerifyBlocks` will attempt to determine whether the
+    -- leader adheres to the FTS schedule since, according to the system, we'd
+    -- still be in `Original` (`usVerifyBlocks` hasn't yet been called).
+    ---------------------------------------------------------------------------
+
     slogUndos <- withExceptT VerifyBlocksError $
         ExceptT $ slogVerifyBlocks genesisConfig currentSlot blocks
     era <- getConsensusEra
