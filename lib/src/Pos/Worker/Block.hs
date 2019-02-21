@@ -256,22 +256,39 @@ blockCreatorOriginal
 blockCreatorOriginal genesisConfig txpConfig (slotId@SlotId {..}) diffusion = do
     -- First of all we create genesis block if necessary.
     mGenBlock <- createGenesisBlockAndApply genesisConfig txpConfig siEpoch
-    whenJust mGenBlock $ \createdBlk -> do
-        logInfo $ sformat ("Created genesis block:\n" %build) createdBlk
-        jsonLog $ jlCreatedBlock (configEpochSlots genesisConfig) (Left createdBlk)
 
-    -- Then we get leaders for current epoch.
-    leadersMaybe <- LrcDB.getLeadersForEpoch siEpoch
-    case leadersMaybe of
-        -- If we don't know leaders, we can't do anything.
-        Nothing -> logWarning "Leaders are not known for new slot"
-        -- If we know leaders, we check whether we are leader and
-        -- create a new block if we are. We also create block if we
-        -- have suitable PSK.
-        Just leaders ->
-            maybe onNoLeader
-                  (onKnownLeader leaders)
-                  (leaders ^? ix (fromIntegral $ getSlotIndex siSlot))
+    -- the ConsensusEra could've changed due to to this
+    -- call trace (thing above calls thing below):
+
+    --    blockCreatorOriginal
+    -- -> createGenesisBlockAndApply
+    -- -> createGenesisBlockDo
+    -- -> verifyBlocksPrefix
+    -- -> usVerifyBlocks
+    -- -> verifyBlock
+    -- -> processGenesisBlock
+    -- -> adoptBlockVersion
+
+    era <- getConsensusEra
+    case era of
+        OBFT _ -> blockCreator genesisConfig txpConfig slotId diffusion
+        Original -> do
+            whenJust mGenBlock $ \createdBlk -> do
+                logInfo $ sformat ("Created genesis block:\n" %build) createdBlk
+                jsonLog $ jlCreatedBlock (configEpochSlots genesisConfig) (Left createdBlk)
+
+            -- Then we get leaders for current epoch.
+            leadersMaybe <- LrcDB.getLeadersForEpoch siEpoch
+            case leadersMaybe of
+                -- If we don't know leaders, we can't do anything.
+                Nothing -> logWarning "Leaders are not known for new slot"
+                -- If we know leaders, we check whether we are leader and
+                -- create a new block if we are. We also create block if we
+                -- have suitable PSK.
+                Just leaders ->
+                    maybe onNoLeader
+                          (onKnownLeader leaders)
+                          (leaders ^? ix (fromIntegral $ getSlotIndex siSlot))
   where
     onNoLeader =
         logError "Couldn't find a leader for current slot among known ones"
